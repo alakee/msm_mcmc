@@ -1,0 +1,391 @@
+Load in required packages:
+
+```{r}
+library(expm)
+library(dplyr)
+library(tidyr)
+library(numDeriv)
+
+```
+
+Function to simulate panel data:
+
+```{r}
+
+# simulate MSM according to specified transition intensity matrix Q
+msm_sim <- function(q.matrix, max.time = 50, num.subjects = 1) {
+  
+  # number of possible states
+  num.states <- nrow(q.matrix)
+  chain.states  <- matrix(0, ncol=num.subjects, nrow=max.time)
+  # the first state is assumed to state 1 for subjects
+  chain.states[1, ] <- 1
+  
+  for (subject in 1:num.subjects){
+    for(time in 2:max.time) {
+      
+      # obtain the probability transition matrix at time t
+      P  <- expm(time*q.matrix)
+      # select the row from P based on the current state
+      p  <- P[chain.states[time-1, subject], ]
+      
+      # draw from multinomial to determine next state
+      chain.states[time, subject] <-  which(rmultinom(1, 1, p) == 1)
+      
+    }
+    
+  }
+  
+  # return the simulated data in long form
+  data <- chain.states %>% 
+    as_tibble() %>% 
+    mutate(time = 1:nrow(.)) %>% 
+    gather("subject_id", "state", paste0("V", 1:num.subjects)) %>% 
+    mutate(subject_id = as.numeric(gsub("V","", subject_id))) %>% 
+    select(subject_id, state, time)
+  
+  
+  return(data)
+}
+
+
+
+```
+
+Function to ensure data is always in a standard format:
+
+```{r}
+
+
+format_msm_data <- function(msm.data){
+  
+  # add the lagged/previous state as a column
+  # and ensure observations are correctly ordered 
+  # by time within each subject
+  lagged.msm.data <- msm.data %>% 
+    group_by(subject_id) %>% 
+    arrange(time) %>% 
+    mutate(prev_state = lag(state)) %>% 
+    ungroup() %>% 
+    # ensures we only have the required columns
+    select(
+      subject_id, state , time, prev_state
+    )
+  
+  return(lagged.msm.data)
+  
+  
+}
+
+```
+
+
+Function to compute log likelihood for multi-state model (assuming panel data):
+
+```{r}
+
+
+
+
+log_likelihood <- function(params, msm.data){
+  
+  n.states <- length(unique(msm.data$state))
+  n.subjects <- length(unique(msm.data$subject_id))
+  
+  # start building up the q matrix
+  for(i in seq(1, n.states^2, (n.states+1))){
+    
+    params <- append(params, NA, after = (i-1))
+    
+  }
+  
+  
+  q <- matrix(params, n.states, n.states)
+  # transpose to get everything in the right order
+  q <- t(q)
+  
+  
+  for(i in 1:n.states){
+    
+    q[i, i] <- -sum(q[i, ], na.rm = TRUE)
+    
+  }
+  
+  # compute the probabilties
+  p <- expm(q)
+  
+  # log likelihood calculation
+  log_lik <- 0
+  
+  
+
+  # compute the log likelihood
+  # loop over each subject
+  for (i in 1:n.subjects){
+    
+    # subdata frame for subject i
+    subject.msm.data <- msm.data %>% 
+      filter(subject_id == i)
+    
+    # number of transitions made 
+    n.transitions <- nrow(subject.msm.data)
+    
+    # loop over each the subject's transitions
+    for(j in 2:n.transitions){
+      
+      index <- unlist(subject.msm.data[, c("prev_state", "state")][j, ], use.names = FALSE)
+      
+  
+      log_lik <- log_lik + log(p[index[1], index[2]])
+      
+    }
+    
+  }
+    
+  return(log_lik)
+  
+}
+
+
+```
+
+Define the prior, posterior and proposal functions:
+
+```{r}
+
+# log prior distribution 
+log_prior <- function(params){
+  
+  # number of parameters to estimate
+  n.params <- length(params)
+  
+  # hold the sum of each the priors
+  params.prior <- 0
+  
+  for (i in 1:n.params){
+    # assume the priors are weakly informative
+    params.prior <- params.prior + dnorm(log(params[i]), sd = 1, log = T)
+    
+  }
+  
+  return(params.prior)
+}
+
+# log posterior distribution 
+log_posterior <- function(params, data){
+  
+  # evaluate at the exponential since parameters (i.e. param)
+  # are sampled on the log scale
+  post.dens <- log_likelihood(exp(params), data) + log_prior(exp(params))
+  
+  return(post.dens)
+}
+
+
+
+# proposal function 
+proposal_values <- function(params, tune_param){
+  
+  # number of parameters to estimate
+  n.params <- length(params)
+  
+  return(rnorm(n.params, params, tune_param))
+}
+
+
+# Metropolis algorithm 
+run_metropolis <- function(start.values, num.samples, tuning.parameter, data){
+  
+  # make sure data is in a standard format
+  mcmc.data <- format_msm_data(msm.data = data)
+  # number of parameters to estimate
+  n.params <- length(start.values)
+  # prepare array to hold samples
+  chain = array(dim = c(num.samples+1,n.params))
+  chain[1,] = start.values
+  
+  # set up a progress bar
+  pb <- txtProgressBar(min = 1, max = num.samples, style = 3)
+  
+  for (i in 1:num.samples){
+    
+  
+    
+    proposal <- proposal_values(chain[i,], tuning.parameter)
+    num <- (log_posterior(proposal, mcmc.data)) 
+    denom <- (log_posterior(chain[i,], mcmc.data))
+    
+    acceptance.ratio <- exp(num - denom)
+    
+    if (runif(1) < acceptance.ratio){
+      chain[i+1,] <- proposal
+    }else{
+      chain[i+1,] <- chain[i,]
+    }
+    
+    setTxtProgressBar(pb, i)
+    
+  }
+  close(pb)
+  return(chain)
+}
+
+```
+
+Function to generate plots after Metropolis - Hastings MCMC:
+
+```{r}
+
+mh_mcmc_plots <- function(chain, burn.in){
+  n.columns <- ncol(chain)
+  
+  par(mfrow = c(n.columns,n.columns))
+  
+  # histograms
+  for ( i in 1:n.columns){
+    
+    hist(chain[-(1:burn.in),i],nclass=30, 
+         main=" ",
+         xlab = paste0("Log posterior mean: ",
+                       round(mean(chain[-(1:burn.in),i]), 2), 
+                       "\nParameter estimate: ",
+                       
+                       round( exp(mean(chain[-(1:burn.in),i])), 2)
+                       )
+         
+         )
+    
+    abline(v = mean(chain[-(1:burn.in),i]), col = "red")
+    
+  }
+  
+  # time series plots 
+  for ( i in 1:n.columns){
+    
+    plot(c(burn.in:iters), chain[-(1:burn.in),i], type = "l",main = " ", ylab = "Simulated value", xlab = "Iteration")
+    
+  }
+  
+  par(mfrow = c(1, 1))
+  
+}
+
+```
+
+
+Function to generate mesh plot of likelihood surface:
+
+```{r}
+
+
+plot_likelihood_surface <- function(x.min, x.max, y.min, y.max, data, tick.size, theta){
+  
+  
+  
+  msm.data <- format_msm_data(data)
+  
+  x <- seq(x.min, x.max, tick.size)
+  y <- seq(y.min, y.max, tick.size)
+  z <- matrix(nrow = length(x), ncol = length(y))
+  
+  for(i in 1:length(x)){
+    for(j in 1:length(y)){
+      z[i, j] <- -log_likelihood(params = c(x[i], y[j]), msm.data =  msm.data)
+    }
+  }
+  
+  # reset figure rows/columns
+  par(mfrow = c(1, 1))
+  
+ # generate a mesh plot of the likelihood surface
+ persp(x, y, z, theta = 110, xlab = "x",
+        ylab = "y",
+        zlab = "Negative Log-likelihood",
+        ticktype = "detailed", 
+        main = " ")
+  
+  
+  # plot the likelihood surface heat map
+  filled.contour(x = x,y = y,
+                 z = z, 
+                 color.palette = terrain.colors,
+                 plot.title = title(main = " ",
+                                    xlab = "x",
+                                    ylab = "y"),
+                 key.title = {par(cex.main=1);title(main = "Negative\nLog-\nlikelihood")})
+  
+  message("\nNOTE: Use the plot navigation arrows to view the plots...\n")
+  
+}
+
+
+
+
+```
+
+
+
+
+
+--------------------
+Examples:
+--------------------
+
+Generate some data:
+```{r}
+
+# define the q matrix
+q <- rbind(
+  c(-1.2, 1.2), 
+  c(0.8, -0.8)
+)
+
+msm.data <- msm_sim(q.matrix = q, num.subjects = 2, max.time = 50)
+
+# check the data
+msm.data 
+
+```
+
+Estimate the MSM through MCMM methods:
+
+```{r}
+ 
+# initialisation
+tune.param <- 0.6
+start.values <- c(1,1)
+iters <- 5000
+# discard half of the samples for burn in
+chain.burn.in <- floor(iters/2)
+
+# run metropolis
+log.chain <- run_metropolis(start.values, iters, tune.param, data = msm.data)
+acceptance.rate <- 1-mean(duplicated(log_chain[-(1:chain.burn.in),]))
+
+ 
+```
+
+Summarise the results:
+
+```{r}
+ 
+
+acceptance.rate
+mh_mcmc_plots(log.chain, chain.burn.in)
+
+
+```
+
+Map out the negative log likelihood surface:
+
+```{r}
+
+plot_likelihood_surface(0.01, 15, 0.01, 15, msm.data, 0.5, 110)
+
+```
+
+
+
+
+
+
