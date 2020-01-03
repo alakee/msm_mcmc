@@ -5,8 +5,9 @@
 ### Introduction
 
 This repository provides a set of R methods which allow the user to
-1)	Simulate panel data from time homogenous Markov multi-state processes, and
-2)	Estimate time homogenous Markov multi-state models via Markov Chain Monte Carlo methods such as Metropolis – Hastings and Hamiltonian Monte Carlo (second is in progress).
+1)	Simulate panel data from time homogenous Markov multi-state processes,
+2)	Estimate time homogenous Markov multi-state models via Markov Chain Monte Carlo methods such as Metropolis – Hastings and Hamiltonian Monte Carlo (second is in progress), 
+3) Explore a model's likelihood surface through a number of visualisations. 
 
 ### Multi-state models
 
