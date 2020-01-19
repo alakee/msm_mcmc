@@ -80,7 +80,7 @@ format_msm_data <- function(msm.data){
 ```
 
 
-Function to compute log likelihood for multi-state model (assuming panel data):
+Function to compute log-likelihood for multi-state model (assuming panel data):
 
 ```{r}
 
@@ -172,14 +172,15 @@ log_prior <- function(params){
 }
 
 # log posterior distribution 
-log_posterior <- function(params, data){
+log_posterior <- function(params, data, negate_posterior = FALSE){
   
   # evaluate at the exponential since parameters (i.e. param)
   # are sampled on the log scale
   post.dens <- log_likelihood(exp(params), data) + log_prior(exp(params))
   
-  return(post.dens)
+  return(if(negate_posterior) -post.dens else post.dens)
 }
+
 
 
 
@@ -193,6 +194,11 @@ proposal_values <- function(params, tune_param){
 }
 
 
+```
+
+Function to run Metropolis - Hastings MCMC: 
+
+```{r}
 # Metropolis algorithm 
 run_metropolis <- function(start.values, num.samples, tuning.parameter, data){
   
@@ -232,13 +238,113 @@ run_metropolis <- function(start.values, num.samples, tuning.parameter, data){
 
 ```
 
+Function to run one step for Hamiltonian Monte Carlo:
+
+```{r}
+
+
+
+one_step_hmc <- function (U, epsilon, L, current_q, tuning.parameter, data){
+  
+  q = current_q
+  p = rnorm(length(q),0, tuning.parameter) 
+  current_p = p
+  
+  
+  # run the leapfrog integrator
+  p = p - epsilon * grad(func = U, q, data = hmc.data, negate_posterior = TRUE) / 2
+  
+  for (i in 1:L)
+  {
+  
+    q = q + epsilon * p
+    
+    if (i!=L) p = p - epsilon * grad(func = U, q, data = hmc.data, negate_posterior = TRUE)
+  }
+  
+  p = p - epsilon * grad(func = U, q, data = hmc.data, negate_posterior = TRUE)  / 2
+  # end
+  
+  
+  # negate the momentum to maintain a symmetric proposal
+  p = -p
+ 
+  
+  current_U = U(current_q, data = hmc.data)
+  current_K = sum(current_p^2) / 2
+  proposed_U = U(q, data = hmc.data)
+  proposed_K = sum(p^2) / 2
+  
+  # run the standard metropolis reject/accept step 
+  if (runif(1) < exp(current_U-proposed_U+current_K-proposed_K))
+  {
+    return (q) # accept
+  }
+  else
+  {
+    return (current_q) # reject
+  }
+  # end
+  
+}
+
+
+```
+
+
+Function to run full Hamiltonian Monte Carlo:
+
+```{r}
+
+
+
+
+run_hmc <- function(start.values, num.samples, tuning.parameter, U, epsilon, L, data){
+  
+  # convert data to a standard format
+  hmc.data <- format_msm_data(msm.data = data)
+  
+  # number of parameters to estimate
+  n.params <- length(start.values)
+  
+  # prepare array to hold samples
+  chain = array(dim = c(num.samples+1,n.params))
+  chain[1,] = start.values
+  
+  # set up a progress bar
+  pb <- txtProgressBar(min = 1, max = num.samples, style = 3)
+  
+  for (i in 1:num.samples){
+    
+    chain[i+1,] <- one_step_hmc(U, epsilon, L, chain[i,], tuning.parameter, hmc.data)
+    
+    setTxtProgressBar(pb, i)
+    
+  }
+  close(pb)
+  
+  return(chain)
+  
+  
+}
+
+
+
+
+
+```
+
+
+
 Function to generate plots after Metropolis - Hastings MCMC:
 
 ```{r}
 
-mh_mcmc_plots <- function(chain, burn.in){
-  n.columns <- ncol(chain)
+mcmc_plots <- function(chain, burn.in){
   
+  n.columns <- ncol(chain)
+  iters <- nrow(chain)
+
   par(mfrow = c(n.columns,n.columns))
   
   # histograms
@@ -262,7 +368,7 @@ mh_mcmc_plots <- function(chain, burn.in){
   # time series plots 
   for ( i in 1:n.columns){
     
-    plot(c(burn.in:iters), chain[-(1:burn.in),i], type = "l",main = " ", ylab = "Simulated value", xlab = "Iteration")
+    plot(c(burn.in:(iters-1)), chain[-(1:burn.in),i], type = "l",main = " ", ylab = "Simulated value", xlab = "Iteration")
     
   }
   
@@ -347,20 +453,25 @@ msm.data
 
 ```
 
-Estimate the MSM through MCMM methods:
+Estimate the MSM through MCMC methods:
 
 ```{r}
  
-# initialisation
-tune.param <- 0.6
-start.values <- c(1,1)
-iters <- 5000
-# discard half of the samples for burn in
-chain.burn.in <- floor(iters/2)
 
-# run metropolis
-log.chain <- run_metropolis(start.values, iters, tune.param, data = msm.data)
-acceptance.rate <- 1-mean(duplicated(log_chain[-(1:chain.burn.in),]))
+
+# 1. run standard random walk metropolis
+log.chain.rw <- run_metropolis(c(1,1),500, 0.7, msm.data)
+
+
+# 2. run hamiltonain monte carlo 
+log.chain.hmc <- run_hmc(c(1,1), 500, 1, log_posterior, 0.1, 5, msm.data)
+
+# burin for each of the chains
+chain.burn.in <- 1
+
+# compute the acceptance rates for both sampling schemes
+acceptance.rate.rw <- 1-mean(duplicated(log.chain.rw[-(1:chain.burn.in),]))
+acceptance.rate.hmc <- 1-mean(duplicated(log.chain.hmc[-(1:chain.burn.in),]))
 
  
 ```
@@ -369,9 +480,12 @@ Summarise the results:
 
 ```{r}
  
+acceptance.rate.rw
+acceptance.rate.hmc
 
-acceptance.rate
-mh_mcmc_plots(log.chain, chain.burn.in)
+
+mcmc_plots(log.chain.rw, 100)
+mcmc_plots(log.chain.hmc, 100)
 
 
 ```
