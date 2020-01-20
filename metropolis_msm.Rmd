@@ -210,6 +210,8 @@ run_metropolis <- function(start.values, num.samples, tuning.parameter, data){
   chain = array(dim = c(num.samples+1,n.params))
   chain[1,] = start.values
   
+   message("Running Random Walk Metropolis - Hastings...")
+  
   # set up a progress bar
   pb <- txtProgressBar(min = 1, max = num.samples, style = 3)
   
@@ -244,10 +246,10 @@ Function to run one step for Hamiltonian Monte Carlo:
 
 
 
-one_step_hmc <- function (U, epsilon, L, current_q, tuning.parameter, data){
+one_step_hmc <- function (U, epsilon, L, current_q, data){
   
   q = current_q
-  p = rnorm(length(q),0, tuning.parameter) 
+  p = rnorm(length(q),0, 1) 
   current_p = p
   
   
@@ -299,7 +301,7 @@ Function to run full Hamiltonian Monte Carlo:
 
 
 
-run_hmc <- function(start.values, num.samples, tuning.parameter, U, epsilon, L, data){
+run_hmc <- function(start.values, num.samples, U, epsilon, L, data){
   
   # convert data to a standard format
   hmc.data <- format_msm_data(msm.data = data)
@@ -311,12 +313,13 @@ run_hmc <- function(start.values, num.samples, tuning.parameter, U, epsilon, L, 
   chain = array(dim = c(num.samples+1,n.params))
   chain[1,] = start.values
   
+   message("Running Hamiltonian Monte Carlo...")
   # set up a progress bar
   pb <- txtProgressBar(min = 1, max = num.samples, style = 3)
   
   for (i in 1:num.samples){
     
-    chain[i+1,] <- one_step_hmc(U, epsilon, L, chain[i,], tuning.parameter, hmc.data)
+    chain[i+1,] <- one_step_hmc(U, epsilon, L, chain[i,], hmc.data)
     
     setTxtProgressBar(pb, i)
     
@@ -461,15 +464,16 @@ Estimate the MSM through MCMC methods:
 log.chain.rw <- run_metropolis(c(1,1),500, 0.7, msm.data)
 
 
-# 2. run hamiltonain monte carlo 
-log.chain.hmc <- run_hmc(c(1,1), 200, 1, log_posterior, 0.1, 25, msm.data)
+# 2. run hamiltonain monte carlo (takes a long time to run)
+log.chain.hmc <- run_hmc(c(1,1), 200,  log_posterior, 0.25, 80, msm.data)
 
 # burin for each of the chains
-chain.burn.in <- 100
+chain.burn.in.rw <- 100
+chain.burn.in.hmc <- 1
 
 # compute the acceptance rates for both sampling schemes
-acceptance.rate.rw <- 1-mean(duplicated(log.chain.rw[-(1:chain.burn.in),]))
-acceptance.rate.hmc <- 1-mean(duplicated(log.chain.hmc[-(1:chain.burn.in),]))
+acceptance.rate.rw <- 1-mean(duplicated(log.chain.rw[-(1:chain.burn.in.rw),]))
+acceptance.rate.hmc <- 1-mean(duplicated(log.chain.hmc[-(1:chain.burn.in.hmc),]))
 
  
 ```
@@ -482,8 +486,8 @@ acceptance.rate.rw
 acceptance.rate.hmc
 
 
-mcmc_plots(log.chain.rw, chain.burn.in)
-mcmc_plots(log.chain.hmc, chain.burn.in)
+mcmc_plots(log.chain.rw, chain.burn.in.rw)
+mcmc_plots(log.chain.hmc, chain.burn.in.hmc)
 
 
 ```
