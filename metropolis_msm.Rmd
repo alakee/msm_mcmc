@@ -252,17 +252,17 @@ one_step_hmc <- function (U, epsilon, L, current_q, tuning.parameter, data){
   
   
   # run the leapfrog integrator
-  p = p - epsilon * grad(func = U, q, data = hmc.data, negate_posterior = TRUE) / 2
+  p = p - epsilon * grad(func = U, q, data = data, negate_posterior = TRUE) / 2
   
   for (i in 1:L)
   {
   
     q = q + epsilon * p
     
-    if (i!=L) p = p - epsilon * grad(func = U, q, data = hmc.data, negate_posterior = TRUE)
+    if (i!=L) p = p - epsilon * grad(func = U, q, data = data, negate_posterior = TRUE)
   }
   
-  p = p - epsilon * grad(func = U, q, data = hmc.data, negate_posterior = TRUE)  / 2
+  p = p - epsilon * grad(func = U, q, data = data, negate_posterior = TRUE)  / 2
   # end
   
   
@@ -270,9 +270,9 @@ one_step_hmc <- function (U, epsilon, L, current_q, tuning.parameter, data){
   p = -p
  
   
-  current_U = U(current_q, data = hmc.data)
+  current_U = U(current_q, data = data, negate_posterior = TRUE)
   current_K = sum(current_p^2) / 2
-  proposed_U = U(q, data = hmc.data)
+  proposed_U = U(q, data = data, negate_posterior = TRUE)
   proposed_K = sum(p^2) / 2
   
   # run the standard metropolis reject/accept step 
@@ -327,8 +327,6 @@ run_hmc <- function(start.values, num.samples, tuning.parameter, U, epsilon, L, 
   
   
 }
-
-
 
 
 
@@ -464,10 +462,10 @@ log.chain.rw <- run_metropolis(c(1,1),500, 0.7, msm.data)
 
 
 # 2. run hamiltonain monte carlo 
-log.chain.hmc <- run_hmc(c(1,1), 500, 1, log_posterior, 0.1, 5, msm.data)
+log.chain.hmc <- run_hmc(c(1,1), 200, 1, log_posterior, 0.1, 25, msm.data)
 
 # burin for each of the chains
-chain.burn.in <- 1
+chain.burn.in <- 100
 
 # compute the acceptance rates for both sampling schemes
 acceptance.rate.rw <- 1-mean(duplicated(log.chain.rw[-(1:chain.burn.in),]))
@@ -484,8 +482,8 @@ acceptance.rate.rw
 acceptance.rate.hmc
 
 
-mcmc_plots(log.chain.rw, 100)
-mcmc_plots(log.chain.hmc, 100)
+mcmc_plots(log.chain.rw, chain.burn.in)
+mcmc_plots(log.chain.hmc, chain.burn.in)
 
 
 ```
@@ -497,9 +495,3 @@ Map out the negative log likelihood surface:
 plot_likelihood_surface(0.01, 15, 0.01, 15, msm.data, 0.5, 110)
 
 ```
-
-
-
-
-
-
